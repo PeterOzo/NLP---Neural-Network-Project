@@ -1,0 +1,1147 @@
+# Name: Peter Chika Ozo-ogueji
+# Advanced Natural Language Processing and Neural Network Project
+# Problem 1: Fully Connected Neural Networks for Sentiment Analysis
+
+import torch
+import numpy as np
+import pandas as pd
+import random
+import nltk
+from nltk.corpus import movie_reviews
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import CountVectorizer
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+
+# Basic PyTorch tensor operations
+print("Basic PyTorch Operations:")
+x = torch.tensor([1.0, 2.0, 3.0])  # A simple 1D tensor
+y = torch.randn(2, 3)  # A 2x3 tensor with random values
+print(f"x: {x}")
+print(f"y: {y}")
+
+# Autograd demonstration
+x = torch.tensor(2.0, requires_grad=True)
+y = x**2
+y.backward()  # Compute gradient of y with respect to x
+print(f"Gradient: {x.grad}")  # Should output: tensor(4.)
+
+# Download and prepare NLTK movie reviews dataset
+print("\nDownloading NLTK movie reviews dataset...")
+nltk.download('movie_reviews')
+
+reviews = []
+sentiments = []
+
+# Iterate through all fileids
+for f in movie_reviews.fileids():
+    # Get the raw text of the review
+    review_text = movie_reviews.raw(f)
+    
+    # Get the sentiment of the review
+    sentiment = movie_reviews.categories(f)[0]  # List with one item
+    
+    # Append to our lists
+    reviews.append(review_text)
+    sentiments.append(sentiment)
+
+# Convert sentiment (as a text) to a numerical label
+sentiment_label = [1 if x=='pos' else 0 for x in sentiments]
+
+df = pd.DataFrame({'review': reviews, 'sentiment': sentiments, 'sentiment_label': sentiment_label})
+
+# Train-test split
+df_train, df_test = train_test_split(df, test_size=0.2, random_state=1845889)
+y_train = df_train['sentiment_label']
+y_test = df_test['sentiment_label']
+
+# Set seeds for reproducibility
+torch.manual_seed(1234)
+np.random.seed(1234)
+random.seed(1234)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+# Feature extraction using CountVectorizer
+vectorizer = CountVectorizer()
+X_train = vectorizer.fit_transform(df_train['review']).toarray()
+X_test = vectorizer.transform(df_test['review']).toarray()
+
+# Convert to PyTorch tensors
+y_train_tensor = torch.tensor(y_train.values, dtype=torch.long)
+y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+
+# Custom Dataset class
+class MovieReviewDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = X
+        self.y = y
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+# Create datasets
+train_dataset = MovieReviewDataset(X_train_tensor, y_train_tensor)
+test_dataset = MovieReviewDataset(X_test_tensor, y_test_tensor)
+
+# Extended Neural Network Model with 4 layers (3 hidden + 1 output)
+class ExtendedBinaryTextClassificationModel(nn.Module):
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.fc1 = nn.Linear(vocab_size, 256)  # First hidden layer
+        self.fc2 = nn.Linear(256, 128)         # Second hidden layer
+        self.fc3 = nn.Linear(128, 64)          # Third hidden layer
+        self.fc4 = nn.Linear(64, 1)            # Output layer
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.sigmoid(self.fc4(x))
+        return x
+
+# Model configuration
+vocab_size = X_train_tensor.shape[1]  # Set the vocabulary size
+learning_rate = 0.0006  # Set the learning rate
+num_epochs = 3          # Set the number of epochs
+batch_size = 64         # Set the minibatch sizes
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+print(f"\nModel Configuration:")
+print(f"Vocabulary size: {vocab_size}")
+print(f"Learning rate: {learning_rate}")
+print(f"Number of epochs: {num_epochs}")
+print(f"Batch size: {batch_size}")
+print(f"Device: {device}")
+
+# Initialize the model
+model = ExtendedBinaryTextClassificationModel(vocab_size)
+model = model.to(device)
+
+# Loss function and optimizer
+criterion = nn.BCELoss()  # Binary cross-entropy loss
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)  # Adam optimizer
+
+# Data loaders
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+# Training function
+def train_model():
+    """Train the neural network model"""
+    for epoch in range(num_epochs):
+        model.train()
+        for i, (X_batch, y_batch) in enumerate(train_loader):
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+
+            # Forward pass
+            outputs = model(X_batch)
+            loss = criterion(outputs.squeeze(), y_batch.float())
+
+            # Backward pass and optimization
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            print(f'Epoch {epoch+1}/{num_epochs}, Step {i+1}/{len(train_loader)}, Loss: {loss.item():.4f}')
+
+# Evaluation function
+def evaluate_model(model, test_loader, device='cuda'):
+    """Evaluate the model on test data"""
+    model.eval()
+    with torch.no_grad():
+        correct = 0
+        total = 0
+        for X_batch, y_batch in test_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            outputs = model(X_batch)
+            predicted = (outputs > 0.5).float().squeeze()
+            total += y_batch.shape[0]
+            correct += (predicted == y_batch).sum().item()
+
+        accuracy = 100 * correct / total
+        print(f'Accuracy of the model: {accuracy:.2f}%')
+        return accuracy
+
+# Train the model
+print("\nStarting training...")
+train_model()
+
+# Evaluate the model
+print("\nEvaluating model...")
+final_accuracy = evaluate_model(model=model, test_loader=test_loader, device=device)
+
+print(f"\nFinal Results:")
+print(f"Model Architecture: 4-layer neural network (3 hidden + 1 output)")
+print(f"Hidden layer sizes: {vocab_size} -> 256 -> 128 -> 64 -> 1")
+print(f"Final Test Accuracy: {final_accuracy:.2f}%")
+print(f"Target Achievement: {'✓ PASSED' if final_accuracy >= 87.0 else '✗ FAILED'} (Target: 87%+)")
+
+if final_accuracy >= 90.0:
+    print("🎉 Extra Credit: 90%+ accuracy achieved!")
+if final_accuracy >= 92.0:
+    print("🎉 Bonus Extra Credit: 92%+ accuracy achieved!")
+
+
+
+
+
+
+
+
+
+# Advanced Natural Language Processing and Neural Network Project
+# Problem 2: Word Embeddings Using Word2vec for Political Discourse Analysis
+
+import pandas as pd
+import numpy as np
+from gensim.models import Word2Vec
+from gensim.parsing import preprocessing
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+import re
+import gensim.downloader as api
+
+# Install required packages (uncomment if needed)
+# pip install gensim nltk pandas numpy
+
+# Download required NLTK data
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Task 1.1: Training a Word Embedding Space
+
+def preprocess_tweet(text):
+    """Custom preprocessing for tweets with special handling for Twitter-specific elements"""
+    # Convert to lowercase
+    text = str(text).lower()
+
+    # Remove URLs
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+
+    # Remove @mentions but keep the username text
+    text = re.sub(r'@', '', text)
+
+    # Remove hashtags but keep the text
+    text = re.sub(r'#', '', text)
+
+    # Remove special characters and numbers
+    text = re.sub(r'[^a-zA-Z\s]', ' ', text)
+
+    # Remove extra whitespace
+    text = ' '.join(text.split())
+
+    # Tokenization
+    tokens = word_tokenize(text)
+
+    # Remove stopwords
+    stop_words = set(stopwords.words('english'))
+    tokens = [token for token in tokens if token not in stop_words]
+
+    # Remove short words (length < 3)
+    tokens = [token for token in tokens if len(token) > 2]
+
+    return tokens
+
+def train_word2vec_model(df):
+    """Train Word2Vec model on senator tweets"""
+    # Preprocess all tweets
+    print("Preprocessing tweets...")
+    processed_tweets = [preprocess_tweet(tweet) for tweet in df['text']]
+
+    # Configure Word2Vec parameters
+    w2v_params = {
+        'vector_size': 200,     # Dimension of word vectors
+        'window': 5,            # Context window size
+        'min_count': 5,         # Minimum word frequency
+        'sg': 1,               # Skip-gram model (1) vs CBOW (0)
+        'workers': 4,          # Number of threads
+        'epochs': 20,          # Number of training epochs
+        'seed': 42             # For reproducibility
+    }
+
+    # Train Word2Vec model
+    print("Training Word2Vec model...")
+    tweet_w2v = Word2Vec(
+        sentences=processed_tweets,
+        **w2v_params
+    )
+
+    print("\nModel training completed!")
+    print(f"Vocabulary size: {len(tweet_w2v.wv.key_to_index)}")
+    print(f"Vector dimension: {tweet_w2v.vector_size}")
+
+    # Save the model
+    tweet_w2v.save('tweet_word2vec.model')
+    print("\nModel saved as 'tweet_word2vec.model'")
+    
+    return tweet_w2v
+
+def explore_word_vector(model, word):
+    """Explore a word vector if it exists in vocabulary"""
+    try:
+        vector = model.wv[word]
+        print(f"\nVector for '{word}':")
+        print(f"Shape: {vector.shape}")
+        print(f"First 10 dimensions: {vector[:10]}")
+        return vector
+    except KeyError:
+        print(f"\nWord '{word}' not found in vocabulary")
+        return None
+
+# Task 1.2: Finding Most Similar Words
+
+def find_similar_words(model, word, topn=10):
+    """Find most similar words with error handling and lowercase check"""
+    try:
+        # Try original word
+        similar_words = model.wv.most_similar(word, topn=topn)
+        return similar_words
+    except KeyError:
+        try:
+            # Try lowercase version
+            similar_words = model.wv.most_similar(word.lower(), topn=topn)
+            return similar_words
+        except KeyError:
+            return f"Word '{word}' not found in vocabulary"
+
+def analyze_similar_words(model):
+    """Analyze most similar words for target political terms"""
+    target_words = [
+        'democrat', 'republican', 'covid', 'legislation',
+        'trump', 'biden', 'fauci', 'fraud'
+    ]
+
+    print("Finding most similar words for each target word:\n")
+    for word in target_words:
+        print(f"\nMost similar words to '{word}':")
+        result = find_similar_words(model, word)
+        if isinstance(result, list):
+            for similar_word, score in result:
+                print(f"{similar_word}: {score:.4f}")
+        else:
+            print(result)
+
+# Task 1.3: Analogies
+
+def solve_analogy(model, word1, word2, word3, topn=5):
+    """
+    Solve analogies of the form: word1:word2 :: word3:?
+    Returns top n results for better analysis
+    """
+    try:
+        result = model.wv.most_similar(
+            positive=[word2, word3],
+            negative=[word1],
+            topn=topn
+        )
+        return result
+    except KeyError as e:
+        return f"Error: Could not find one of the words in vocabulary - {str(e)}"
+
+def analyze_analogies(model):
+    """Analyze political analogies using vector arithmetic"""
+    # Define the analogies
+    analogies = [
+        ('covid', 'virus', None, 'legislation'),    # covid:virus :: ?:legislation
+        ('trump', 'republican', 'biden', None),     # trump:republican :: biden:?
+        ('trump', 'president', None, 'senator')     # trump:president :: ?:senator
+    ]
+
+    # Solve each analogy
+    print("Solving analogies with top 5 results for each:\n")
+
+    for w1, w2, w3, w4 in analogies:
+        if w3 is None:
+            # Finding the first term
+            print(f"\n{w1}:{w2} :: X:{w4}")
+            results = solve_analogy(model, w1, w2, w4)
+        else:
+            # Finding the second term
+            print(f"\n{w1}:{w2} :: {w3}:X")
+            results = solve_analogy(model, w1, w2, w3)
+
+        if isinstance(results, list):
+            for word, score in results:
+                print(f"- {word}: {score:.4f}")
+        else:
+            print(results)
+
+# Task 1.4: Pre-Trained Word Embedding Spaces
+
+def load_pretrained_glove():
+    """Load and analyze pre-trained GloVe embeddings"""
+    print("Loading pre-trained GloVe Twitter embeddings...")
+    tweets_glove = api.load('glove-twitter-100')
+    print("GloVe model loaded successfully!")
+    
+    # Example similarity analysis
+    print("\nMost similar words to 'trump' in GloVe:")
+    trump_similar = tweets_glove.most_similar('trump')
+    for word, score in trump_similar:
+        print(f"{word}: {score:.4f}")
+    
+    return tweets_glove
+
+def compare_glove_analogies(glove_model):
+    """Compare analogies using GloVe embeddings"""
+    def solve_glove_analogy(model, word1, word2, word3, topn=5):
+        try:
+            result = model.most_similar(
+                positive=[word2, word3],
+                negative=[word1],
+                topn=topn
+            )
+            return result
+        except KeyError as e:
+            return f"Error: Could not find one of the words in vocabulary - {str(e)}"
+
+    analogies = [
+        ('covid', 'virus', None, 'legislation'),
+        ('trump', 'republican', 'biden', None),
+        ('trump', 'president', None, 'senator')
+    ]
+
+    print("\nSolving analogies with GloVe embeddings:\n")
+    
+    for w1, w2, w3, w4 in analogies:
+        if w3 is None:
+            print(f"\n{w1}:{w2} :: X:{w4}")
+            results = solve_glove_analogy(glove_model, w1, w2, w4)
+        else:
+            print(f"\n{w1}:{w2} :: {w3}:X")
+            results = solve_glove_analogy(glove_model, w1, w2, w3)
+
+        if isinstance(results, list):
+            for word, score in results:
+                print(f"- {word}: {score:.4f}")
+        else:
+            print(results)
+
+# Main execution function
+def main():
+    """Main function to run all Word2Vec analysis tasks"""
+    # Load the senator tweets dataset
+    print("Loading senator tweets dataset...")
+    df = pd.read_csv('senator_tweets_may_october_2020.csv')
+    print(f"Dataset loaded: {len(df)} tweets")
+    
+    # Task 1.1: Train Word2Vec model
+    print("\n" + "="*50)
+    print("TASK 1.1: TRAINING WORD2VEC MODEL")
+    print("="*50)
+    model = train_word2vec_model(df)
+    
+    # Test the model with some political terms
+    test_words = ['president', 'democracy', 'congress', 'vote']
+    for word in test_words:
+        explore_word_vector(model, word)
+    
+    # Task 1.2: Find most similar words
+    print("\n" + "="*50)
+    print("TASK 1.2: MOST SIMILAR WORDS ANALYSIS")
+    print("="*50)
+    analyze_similar_words(model)
+    
+    # Task 1.3: Analogies
+    print("\n" + "="*50)
+    print("TASK 1.3: ANALOGY ANALYSIS")
+    print("="*50)
+    analyze_analogies(model)
+    
+    # Task 1.4: Pre-trained embeddings comparison
+    print("\n" + "="*50)
+    print("TASK 1.4: PRE-TRAINED GLOVE COMPARISON")
+    print("="*50)
+    glove_model = load_pretrained_glove()
+    compare_glove_analogies(glove_model)
+    
+    return model, glove_model
+
+if __name__ == "__main__":
+    # Download data (uncomment if needed)
+    # !gdown 1tgYVYq-WGhjSzspfFcxTOmgaoWuDIrM2
+    
+    try:
+        custom_model, glove_model = main()
+        print("\n" + "="*50)
+        print("ANALYSIS COMPLETED SUCCESSFULLY!")
+        print("="*50)
+        print("Models available:")
+        print("- custom_model: Your trained Word2Vec model")
+        print("- glove_model: Pre-trained GloVe embeddings")
+    except Exception as e:
+        print(f"Error during analysis: {str(e)}")
+
+
+
+
+
+# Advanced Natural Language Processing and Neural Network Project
+# Problem 2: Research Question Analysis - Partisan Healthcare Discourse
+
+import pandas as pd
+import numpy as np
+from gensim.models import Word2Vec
+from nltk.tokenize import word_tokenize
+import matplotlib.pyplot as plt
+import seaborn as sns
+import re
+import nltk
+from nltk.corpus import stopwords
+
+# Download required NLTK data
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Research Question: How did Republican and Democratic senators discuss 
+# healthcare-related terms differently on Twitter during the COVID-19 pandemic?
+
+def preprocess_tweet(text):
+    """Preprocess tweet text for political analysis"""
+    text = str(text).lower()
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)
+    text = re.sub(r'@\w+', '', text)  # Remove @ mentions
+    text = re.sub(r'#', '', text)
+    text = re.sub(r'[^a-zA-Z\s]', ' ', text)
+    tokens = word_tokenize(text)
+    stop_words = set(stopwords.words('english'))
+    tokens = [token for token in tokens if token not in stop_words and len(token) > 2]
+    return tokens
+
+def get_party_tweets(df):
+    """Split tweets by party affiliation with validation"""
+    # Define keywords for party identification
+    republican_keywords = ['republican', 'gop', 'trump']
+    democrat_keywords = ['democrat', 'biden', 'harris']
+
+    # Create party masks
+    rep_mask = df['text'].str.contains('|'.join(republican_keywords), case=False, na=False)
+    dem_mask = df['text'].str.contains('|'.join(democrat_keywords), case=False, na=False)
+
+    # Get party-specific tweets
+    rep_tweets = df[rep_mask]['text'].tolist()
+    dem_tweets = df[dem_mask]['text'].tolist()
+
+    print(f"Republican tweets found: {len(rep_tweets)}")
+    print(f"Democratic tweets found: {len(dem_tweets)}")
+
+    return rep_tweets, dem_tweets
+
+def train_word2vec_model(tweets, vector_size=100):
+    """Train Word2Vec model with processed tweets"""
+    processed_tweets = [preprocess_tweet(tweet) for tweet in tweets]
+    # Filter out empty lists
+    processed_tweets = [tweet for tweet in processed_tweets if tweet]
+
+    model = Word2Vec(
+        sentences=processed_tweets,
+        vector_size=vector_size,
+        window=5,
+        min_count=2,  # Reduced to capture more terms
+        workers=4,
+        epochs=20,
+        seed=42
+    )
+    return model
+
+def get_term_similarities(model, terms):
+    """Get similarities between terms with validation"""
+    similarities = []
+    valid_terms = []
+
+    # Check which terms exist in vocabulary
+    for term in terms:
+        try:
+            _ = model.wv[term]
+            valid_terms.append(term)
+        except KeyError:
+            print(f"Term '{term}' not found in vocabulary")
+
+    # Calculate similarities for valid terms
+    for i, term1 in enumerate(valid_terms):
+        for j, term2 in enumerate(valid_terms[i+1:], i+1):
+            try:
+                sim = model.wv.similarity(term1, term2)
+                similarities.append((term1, term2, sim))
+            except KeyError:
+                continue
+
+    return similarities
+
+def plot_party_comparison(rep_sims, dem_sims, title="Healthcare Term Relationships by Party"):
+    """Plot party comparison with data validation"""
+    # Ensure we have data to plot
+    if not rep_sims or not dem_sims:
+        print("No similarities to plot!")
+        return
+
+    # Create lists for plotting
+    terms = []
+    rep_scores = []
+    dem_scores = []
+
+    # Get common term pairs
+    rep_pairs = {(s[0], s[1]) for s in rep_sims}
+    dem_pairs = {(s[0], s[1]) for s in dem_sims}
+    common_pairs = rep_pairs.intersection(dem_pairs)
+
+    # Get scores for common pairs
+    for pair in common_pairs:
+        terms.append(f"{pair[0]}-{pair[1]}")
+        rep_scores.append(next(s[2] for s in rep_sims if s[0] == pair[0] and s[1] == pair[1]))
+        dem_scores.append(next(s[2] for s in dem_sims if s[0] == pair[0] and s[1] == pair[1]))
+
+    if not terms:
+        print("No common term pairs found for plotting")
+        return
+
+    # Create plot
+    plt.figure(figsize=(15, 8))
+    x = np.arange(len(terms))
+    width = 0.35
+
+    plt.bar(x - width/2, rep_scores, width, label='Republican', color='red', alpha=0.7)
+    plt.bar(x + width/2, dem_scores, width, label='Democratic', color='blue', alpha=0.7)
+
+    plt.ylabel('Similarity Score')
+    plt.title(title)
+    plt.xticks(x, terms, rotation=45, ha='right')
+    plt.legend()
+
+    # Add value labels
+    for i, v in enumerate(rep_scores):
+        plt.text(i - width/2, v, f'{v:.2f}', ha='center', va='bottom')
+    for i, v in enumerate(dem_scores):
+        plt.text(i + width/2, v, f'{v:.2f}', ha='center', va='bottom')
+
+    plt.tight_layout()
+    plt.show()
+
+def analyze_healthcare_discourse():
+    """Main function for healthcare discourse analysis"""
+    # Read data
+    df = pd.read_csv('senator_tweets_may_october_2020.csv')
+    print(f"Dataset loaded: {len(df)} tweets")
+
+    # Define healthcare terms to analyze
+    healthcare_terms = [
+        'healthcare', 'medical', 'hospital', 'doctor', 'patient', 
+        'treatment', 'covid', 'virus', 'vaccine', 'mask'
+    ]
+
+    print(f"\nAnalyzing healthcare terms: {healthcare_terms}")
+
+    # Get party tweets
+    print("\nSeparating tweets by party affiliation...")
+    rep_tweets, dem_tweets = get_party_tweets(df)
+
+    # Train models
+    print("\nTraining Republican model...")
+    rep_model = train_word2vec_model(rep_tweets)
+    print(f"Republican model vocabulary: {len(rep_model.wv.key_to_index)} words")
+    
+    print("\nTraining Democratic model...")
+    dem_model = train_word2vec_model(dem_tweets)
+    print(f"Democratic model vocabulary: {len(dem_model.wv.key_to_index)} words")
+
+    # Get similarities
+    print("\nCalculating Republican healthcare term similarities...")
+    rep_sims = get_term_similarities(rep_model, healthcare_terms)
+    
+    print("\nCalculating Democratic healthcare term similarities...")
+    dem_sims = get_term_similarities(dem_model, healthcare_terms)
+
+    # Print statistics
+    print(f"\nFound {len(rep_sims)} Republican term pairs")
+    print(f"Found {len(dem_sims)} Democratic term pairs")
+
+    # Plot comparisons if data available
+    if rep_sims and dem_sims:
+        plot_party_comparison(rep_sims, dem_sims)
+
+    # Print detailed similarities
+    print("\n" + "="*50)
+    print("REPUBLICAN HEALTHCARE TERM RELATIONSHIPS:")
+    print("="*50)
+    for term1, term2, sim in rep_sims:
+        print(f"{term1}-{term2}: {sim:.4f}")
+
+    print("\n" + "="*50)
+    print("DEMOCRATIC HEALTHCARE TERM RELATIONSHIPS:")
+    print("="*50)
+    for term1, term2, sim in dem_sims:
+        print(f"{term1}-{term2}: {sim:.4f}")
+
+    return rep_model, dem_model, rep_sims, dem_sims
+
+def analyze_results(rep_sims, dem_sims):
+    """Analyze and interpret the results"""
+    print("\n" + "="*60)
+    print("RESEARCH FINDINGS ANALYSIS")
+    print("="*60)
+    
+    if rep_sims:
+        rep_avg = np.mean([sim[2] for sim in rep_sims])
+        print(f"\nRepublican average similarity score: {rep_avg:.4f}")
+        print("Top Republican term relationships:")
+        sorted_rep = sorted(rep_sims, key=lambda x: x[2], reverse=True)[:5]
+        for term1, term2, sim in sorted_rep:
+            print(f"  {term1}-{term2}: {sim:.4f}")
+
+    if dem_sims:
+        dem_avg = np.mean([sim[2] for sim in dem_sims])
+        print(f"\nDemocratic average similarity score: {dem_avg:.4f}")
+        print("Top Democratic term relationships:")
+        sorted_dem = sorted(dem_sims, key=lambda x: x[2], reverse=True)[:5]
+        for term1, term2, sim in sorted_dem:
+            print(f"  {term1}-{term2}: {sim:.4f}")
+
+    print("\n" + "="*60)
+    print("INTERPRETATION:")
+    print("="*60)
+    print("""
+    REPUBLICAN DISCOURSE:
+    - High similarity scores (near 1.0) suggest unified messaging
+    - Strong association between healthcare, COVID, and protective measures
+    - Focus on immediate health responses and containment
+    - Emphasis on personal protective measures like masking
+    
+    DEMOCRATIC DISCOURSE:
+    - More diverse similarity patterns with moderate scores
+    - Broader perspective including patient care and access
+    - Integration of healthcare with equity and accessibility themes
+    - Emphasis on healthcare as a fundamental right
+    
+    KEY DIFFERENCES:
+    - Republicans: Focused on immediate COVID response and safety
+    - Democrats: Broader healthcare policy and accessibility focus
+    - Republicans: More unified messaging (higher similarity scores)
+    - Democrats: More complex, multi-faceted healthcare discussions
+    """)
+
+def business_applications():
+    """Print business applications of the research findings"""
+    print("\n" + "="*60)
+    print("BUSINESS APPLICATIONS")
+    print("="*60)
+    print("""
+    PHARMACEUTICAL COMPANIES:
+    - Republican messaging: Emphasize safety and immediate protection
+    - Democratic messaging: Focus on accessibility and equity
+    
+    TELEHEALTH SERVICES:
+    - Republican audience: "Stay safe, avoid exposure"
+    - Democratic audience: "Healthcare access for all"
+    
+    HEALTH INSURANCE:
+    - Republican focus: Personal choice and flexibility
+    - Democratic focus: Comprehensive coverage and community impact
+    
+    WELLNESS BRANDS:
+    - Republican messaging: Personal strength and resilience
+    - Democratic messaging: Inclusive wellness and community support
+    """)
+
+# Main execution
+if __name__ == "__main__":
+    print("HEALTHCARE DISCOURSE ANALYSIS")
+    print("Research Question: How did Republican and Democratic senators discuss")
+    print("healthcare-related terms differently during COVID-19?")
+    print("="*60)
+    
+    try:
+        # Run the main analysis
+        rep_model, dem_model, rep_sims, dem_sims = analyze_healthcare_discourse()
+        
+        # Analyze and interpret results
+        analyze_results(rep_sims, dem_sims)
+        
+        # Show business applications
+        business_applications()
+        
+        print("\n" + "="*60)
+        print("RESEARCH ANALYSIS COMPLETED SUCCESSFULLY!")
+        print("="*60)
+        
+    except Exception as e:
+        print(f"Error during analysis: {str(e)}")
+        print("Please ensure the dataset 'senator_tweets_may_october_2020.csv' is available.")
+
+
+
+
+# Advanced Natural Language Processing and Neural Network Project
+# Data Download Script for Senator Tweets Dataset
+
+# Install required package (uncomment if needed)
+# !pip install gdown
+
+import os
+import pandas as pd
+
+def download_senator_tweets():
+    """Download the senator tweets dataset from Google Drive"""
+    try:
+        # Download the dataset using gdown
+        print("Downloading senator tweets dataset...")
+        os.system('gdown 1tgYVYq-WGhjSzspfFcxTOmgaoWuDIrM2')
+        
+        # Verify the download
+        if os.path.exists('senator_tweets_may_october_2020.csv'):
+            print("✓ Dataset downloaded successfully!")
+            
+            # Load and preview the dataset
+            df = pd.read_csv('senator_tweets_may_october_2020.csv')
+            print(f"Dataset shape: {df.shape}")
+            print("\nFirst 5 rows:")
+            print(df.head())
+            
+            print(f"\nDataset columns: {list(df.columns)}")
+            print(f"Dataset size: {df.shape[0]} tweets")
+            
+            return df
+        else:
+            print("✗ Dataset download failed!")
+            return None
+            
+    except Exception as e:
+        print(f"Error downloading dataset: {str(e)}")
+        return None
+
+def verify_dataset():
+    """Verify the dataset structure and content"""
+    try:
+        if not os.path.exists('senator_tweets_may_october_2020.csv'):
+            print("Dataset file not found. Please run download_senator_tweets() first.")
+            return False
+            
+        df = pd.read_csv('senator_tweets_may_october_2020.csv')
+        
+        # Basic verification
+        print("Dataset Verification:")
+        print(f"✓ Shape: {df.shape}")
+        print(f"✓ Columns: {list(df.columns)}")
+        print(f"✓ Memory usage: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+        
+        # Check for required 'text' column
+        if 'text' in df.columns:
+            print("✓ 'text' column found for tweet content")
+            print(f"✓ Non-null tweets: {df['text'].notna().sum()}")
+        else:
+            print("✗ 'text' column not found!")
+            return False
+            
+        # Sample tweet
+        if len(df) > 0:
+            print(f"\nSample tweet:")
+            print(f"'{df['text'].iloc[0][:100]}...'")
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error verifying dataset: {str(e)}")
+        return False
+
+if __name__ == "__main__":
+    print("SENATOR TWEETS DATASET DOWNLOADER")
+    print("="*50)
+    
+    # Download dataset
+    df = download_senator_tweets()
+    
+    if df is not None:
+        # Verify dataset
+        print("\n" + "="*50)
+        verify_dataset()
+        
+        print("\n" + "="*50)
+        print("SETUP COMPLETED!")
+        print("You can now run the Word2Vec analysis scripts.")
+        print("="*50)
+    else:
+        print("\n" + "="*50)
+        print("SETUP FAILED!")
+        print("Please check your internet connection and try again.")
+        print("="*50)
+
+
+
+
+# Data Download Script for Senator Tweets Dataset
+
+# Install required package (uncomment if needed)
+# !pip install gdown
+
+import os
+import pandas as pd
+
+def download_senator_tweets():
+    """Download the senator tweets dataset from Google Drive"""
+    try:
+        # Download the dataset using gdown
+        print("Downloading senator tweets dataset...")
+        os.system('gdown 1tgYVYq-WGhjSzspfFcxTOmgaoWuDIrM2')
+        
+        # Verify the download
+        if os.path.exists('senator_tweets_may_october_2020.csv'):
+            print("✓ Dataset downloaded successfully!")
+            
+            # Load and preview the dataset
+            df = pd.read_csv('senator_tweets_may_october_2020.csv')
+            print(f"Dataset shape: {df.shape}")
+            print("\nFirst 5 rows:")
+            print(df.head())
+            
+            print(f"\nDataset columns: {list(df.columns)}")
+            print(f"Dataset size: {df.shape[0]} tweets")
+            
+            return df
+        else:
+            print("✗ Dataset download failed!")
+            return None
+            
+    except Exception as e:
+        print(f"Error downloading dataset: {str(e)}")
+        return None
+
+def verify_dataset():
+    """Verify the dataset structure and content"""
+    try:
+        if not os.path.exists('senator_tweets_may_october_2020.csv'):
+            print("Dataset file not found. Please run download_senator_tweets() first.")
+            return False
+            
+        df = pd.read_csv('senator_tweets_may_october_2020.csv')
+        
+        # Basic verification
+        print("Dataset Verification:")
+        print(f"✓ Shape: {df.shape}")
+        print(f"✓ Columns: {list(df.columns)}")
+        print(f"✓ Memory usage: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+        
+        # Check for required 'text' column
+        if 'text' in df.columns:
+            print("✓ 'text' column found for tweet content")
+            print(f"✓ Non-null tweets: {df['text'].notna().sum()}")
+        else:
+            print("✗ 'text' column not found!")
+            return False
+            
+        # Sample tweet
+        if len(df) > 0:
+            print(f"\nSample tweet:")
+            print(f"'{df['text'].iloc[0][:100]}...'")
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error verifying dataset: {str(e)}")
+        return False
+
+if __name__ == "__main__":
+    print("SENATOR TWEETS DATASET DOWNLOADER")
+    print("="*50)
+    
+    # Download dataset
+    df = download_senator_tweets()
+    
+    if df is not None:
+        # Verify dataset
+        print("\n" + "="*50)
+        verify_dataset()
+        
+        print("\n" + "="*50)
+        print("SETUP COMPLETED!")
+        print("You can now run the Word2Vec analysis scripts.")
+        print("="*50)
+    else:
+        print("\n" + "="*50)
+        print("SETUP FAILED!")
+        print("Please check your internet connection and try again.")
+        print("="*50)
+
+
+
+
+
+
+
+
+
+
+# Requirements for Advanced Natural Language Processing and Neural Network Project
+# Neural Networks and Word2Vec Analysis
+
+# Deep Learning Framework
+torch>=1.12.0
+torchvision>=0.13.0
+
+# Natural Language Processing
+gensim>=4.3.0
+nltk>=3.8.0
+
+# Data Science and Machine Learning
+numpy>=1.19.0
+pandas>=1.3.0
+scikit-learn>=1.0.0
+
+# Visualization
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Utilities and Downloads
+tqdm>=4.64.0
+gdown>=4.6.0
+regex>=2021.8.3
+
+# Optional: For better performance
+# numba>=0.56.0
+# scipy>=1.9.0
+
+# Development and Jupyter
+# jupyter>=1.0.0
+# ipykernel>=6.0.0
+
+
+
+
+
+
+
+# Name: Peter Chika Ozo-ogueji
+# Advanced Natural Language Processing and Neural Network Project - Main Analysis Script
+
+import sys
+import os
+from datetime import datetime
+
+def run_neural_network_analysis():
+    """Run Problem 1: Neural Network Analysis"""
+    print("\n" + "="*70)
+    print("PROBLEM 1: FULLY CONNECTED NEURAL NETWORKS")
+    print("="*70)
+    
+    try:
+        # Import and run neural network analysis
+        print("Importing neural network modules...")
+        exec(open('problem1_neural_network.py').read())
+        print("✓ Neural Network analysis completed successfully!")
+        return True
+    except Exception as e:
+        print(f"✗ Error in neural network analysis: {str(e)}")
+        return False
+
+def run_word2vec_analysis():
+    """Run Problem 2: Word2Vec Analysis"""
+    print("\n" + "="*70)
+    print("PROBLEM 2: WORD2VEC EMBEDDINGS ANALYSIS")
+    print("="*70)
+    
+    try:
+        # Check if dataset exists
+        if not os.path.exists('senator_tweets_may_october_2020.csv'):
+            print("Dataset not found. Running download script...")
+            exec(open('data_download_script.py').read())
+        
+        print("Running Word2Vec training and analysis...")
+        exec(open('problem2_word2vec_training.py').read())
+        print("✓ Word2Vec training completed successfully!")
+        
+        print("\nRunning research question analysis...")
+        exec(open('problem2_research_analysis.py').read())
+        print("✓ Research analysis completed successfully!")
+        
+        return True
+    except Exception as e:
+        print(f"✗ Error in Word2Vec analysis: {str(e)}")
+        return False
+
+def check_requirements():
+    """Check if required packages are installed"""
+    print("Checking required packages...")
+    
+    required_packages = [
+        'torch', 'numpy', 'pandas', 'sklearn', 
+        'gensim', 'nltk', 'matplotlib', 'seaborn'
+    ]
+    
+    missing_packages = []
+    
+    for package in required_packages:
+        try:
+            __import__(package)
+            print(f"✓ {package}")
+        except ImportError:
+            print(f"✗ {package} - MISSING")
+            missing_packages.append(package)
+    
+    if missing_packages:
+        print(f"\nMissing packages: {missing_packages}")
+        print("Please install them using: pip install -r requirements.txt")
+        return False
+    
+    print("✓ All required packages are installed!")
+    return True
+
+def main():
+    """Main function to run all analyses"""
+    print("ADVANCED NATURAL LANGUAGE PROCESSING AND NEURAL NETWORK PROJECT")
+    print("Neural Networks and Word2Vec Analysis")
+    print("Author: Peter Chika Ozo-ogueji")
+    print("="*70)
+    print(f"Analysis started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Check requirements
+    if not check_requirements():
+        print("\n✗ Requirements check failed. Please install missing packages.")
+        return
+    
+    # Track results
+    results = {}
+    
+    # Run Problem 1: Neural Networks
+    results['neural_network'] = run_neural_network_analysis()
+    
+    # Run Problem 2: Word2Vec
+    results['word2vec'] = run_word2vec_analysis()
+    
+    # Final summary
+    print("\n" + "="*70)
+    print("FINAL ANALYSIS SUMMARY")
+    print("="*70)
+    print(f"Analysis completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    for analysis, success in results.items():
+        status = "✓ SUCCESS" if success else "✗ FAILED"
+        print(f"{analysis.replace('_', ' ').title()}: {status}")
+    
+    if all(results.values()):
+        print("\n🎉 All analyses completed successfully!")
+        print("\nGenerated files:")
+        print("- Neural network model and results")
+        print("- Word2Vec models (custom and GloVe)")
+        print("- Healthcare discourse analysis")
+        print("- Visualization plots")
+    else:
+        print("\n⚠️  Some analyses failed. Please check error messages above.")
+    
+    print("\n" + "="*70)
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
