@@ -1,12 +1,12 @@
-## Advanced Natural Language Processing: Neural Networks and Word2Vec Analysis
+### Advanced Natural Language Processing: Neural Networks and Word2Vec Analysis
 
-## Project Overview
+### Project Overview
 
 This repository contains a comprehensive implementation of **deep neural networks** and **word embedding analysis** developed for **Advanced Machine Learning Assignment 3**. The project demonstrates advanced PyTorch techniques for text classification and explores political discourse through Word2Vec embeddings using real-world social media data from U.S. senators during the COVID-19 pandemic.
 
 ---
 
-## Problem 1: Fully Connected Neural Networks
+### Problem 1: Fully Connected Neural Networks
 
 ### Project Description
 Implementation of a sophisticated **deep neural network** for binary sentiment classification using PyTorch. The project focuses on classifying movie reviews from the NLTK movie reviews dataset using advanced deep learning techniques.
